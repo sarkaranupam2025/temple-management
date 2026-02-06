@@ -1,0 +1,805 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// CORE: Users & Authentication
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  TEMPLE_ADMIN
+  TRUSTEE
+  MANAGER
+  PRIEST
+  HEAD_PRIEST
+  OFFICE_STAFF
+  VOLUNTEER
+  DEVOTEE
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  phone         String?   @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          UserRole  @default(DEVOTEE)
+  isActive      Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  phoneVerified Boolean   @default(false)
+  avatarUrl     String?
+  language      String    @default("en")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relationships
+  templeStaff       TempleStaff[]
+  bookings          Booking[]
+  donations         Donation[]
+  volunteerProfile  VolunteerProfile?
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  lostFoundReports  LostFoundItem[]
+  feedbacks         Feedback[]
+  devoteeProfile    DevoteeProfile?
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+}
+
+model DevoteeProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  panCard         String?
+  address         String?
+  city            String?
+  state           String?
+  pincode         String?
+  country         String   @default("India")
+  dateOfBirth     DateTime?
+  gotra           String?
+  nakshatra       String?
+  uniqueQrCode    String?  @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================================================
+// MODULE 1: Temple & Ritual Management
+// ============================================================
+
+model Temple {
+  id                String   @id @default(uuid())
+  name              String
+  deity             String
+  foundingYear      Int?
+  architecturalStyle String?
+  description       String?
+  address           String
+  city              String
+  state             String
+  pincode           String
+  country           String   @default("India")
+  phone             String?
+  email             String?
+  emergencyContact  String?
+  latitude          Float?
+  longitude         Float?
+  parkingCapacity   Int      @default(0)
+  hasWheelchairAccess Boolean @default(false)
+  hasMeditationHall Boolean  @default(false)
+  virtualTourUrl    String?
+  websiteUrl        String?
+  isActive          Boolean  @default(true)
+  parentTempleId    String?
+  parentTemple      Temple?  @relation("TempleHierarchy", fields: [parentTempleId], references: [id])
+  childTemples      Temple[] @relation("TempleHierarchy")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relationships
+  timings           TempleTimings[]
+  staff             TempleStaff[]
+  rituals           Ritual[]
+  events            Event[]
+  bookingSlots      BookingSlot[]
+  donations         Donation[]
+  prasadItems       PrasadItem[]
+  announcements     Announcement[]
+  lostFoundItems    LostFoundItem[]
+  mediaGallery      TempleMedia[]
+  translations      TempleTranslation[]
+  facilities        TempleFacility[]
+
+  @@index([city, state])
+  @@index([parentTempleId])
+}
+
+model TempleTranslation {
+  id          String @id @default(uuid())
+  templeId    String
+  temple      Temple @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  language    String
+  name        String
+  description String?
+  address     String?
+
+  @@unique([templeId, language])
+}
+
+model TempleMedia {
+  id          String   @id @default(uuid())
+  templeId    String
+  temple      Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  type        String   // photo, video, document, virtual_tour
+  url         String
+  caption     String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([templeId])
+}
+
+model TempleFacility {
+  id          String @id @default(uuid())
+  templeId    String
+  temple      Temple @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isAvailable Boolean @default(true)
+  capacity    Int?
+}
+
+model TempleTimings {
+  id          String   @id @default(uuid())
+  templeId    String
+  temple      Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int      // 0=Sunday, 6=Saturday
+  openTime    String   // HH:mm format
+  closeTime   String   // HH:mm format
+  isSpecial   Boolean  @default(false)
+  specialDate DateTime?
+  label       String?  // e.g., "Morning Darshan", "Evening Aarti"
+  isActive    Boolean  @default(true)
+
+  @@index([templeId, dayOfWeek])
+}
+
+model TempleStaff {
+  id          String   @id @default(uuid())
+  templeId    String
+  temple      Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        UserRole
+  department  String?
+  joinedAt    DateTime @default(now())
+  isActive    Boolean  @default(true)
+
+  @@unique([templeId, userId])
+  @@index([templeId])
+}
+
+enum RitualType {
+  DAILY_PUJA
+  SPECIAL_ABHISHEKAM
+  FESTIVAL_EVENT
+  PERSONAL_RITUAL
+}
+
+model Ritual {
+  id              String     @id @default(uuid())
+  templeId        String
+  temple          Temple     @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  name            String
+  type            RitualType
+  description     String?
+  duration        Int        // in minutes
+  capacity        Int?
+  price           Float      @default(0)
+  isRecurring     Boolean    @default(false)
+  recurringRule   String?    // cron-like expression
+  requiresPriest  Boolean    @default(true)
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relationships
+  schedules       RitualSchedule[]
+  bookings        Booking[]
+  translations    RitualTranslation[]
+
+  @@index([templeId, type])
+}
+
+model RitualTranslation {
+  id          String @id @default(uuid())
+  ritualId    String
+  ritual      Ritual @relation(fields: [ritualId], references: [id], onDelete: Cascade)
+  language    String
+  name        String
+  description String?
+
+  @@unique([ritualId, language])
+}
+
+model RitualSchedule {
+  id          String   @id @default(uuid())
+  ritualId    String
+  ritual      Ritual   @relation(fields: [ritualId], references: [id], onDelete: Cascade)
+  date        DateTime
+  startTime   String   // HH:mm
+  endTime     String   // HH:mm
+  priestName  String?
+  status      String   @default("scheduled") // scheduled, in_progress, completed, cancelled
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@index([ritualId, date])
+  @@index([date, status])
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  templeId    String
+  temple      Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  isPublic    Boolean  @default(true)
+  capacity    Int?
+  location    String?
+  category    String?  // festival, cultural, community, spiritual
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([templeId, startDate])
+}
+
+// ============================================================
+// MODULE 2: Smart Queue & Booking Management
+// ============================================================
+
+model BookingSlot {
+  id            String   @id @default(uuid())
+  templeId      String
+  temple        Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  date          DateTime
+  startTime     String   // HH:mm
+  endTime       String   // HH:mm
+  capacity      Int
+  bookedCount   Int      @default(0)
+  bufferMinutes Int      @default(10)
+  slotType      String   @default("regular") // regular, senior, disabled, group
+  price         Float    @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  bookings      Booking[]
+
+  @@index([templeId, date])
+  @@index([date, slotType])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+model Booking {
+  id              String        @id @default(uuid())
+  bookingNumber   String        @unique
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  templeId        String
+  slotId          String?
+  slot            BookingSlot?  @relation(fields: [slotId], references: [id])
+  ritualId        String?
+  ritual          Ritual?       @relation(fields: [ritualId], references: [id])
+  date            DateTime
+  numberOfPersons Int           @default(1)
+  status          BookingStatus @default(PENDING)
+  qrCode          String?       @unique
+  specialRequests String?
+  groupName       String?
+  totalAmount     Float         @default(0)
+  paymentStatus   String        @default("pending") // pending, paid, refunded
+  checkedInAt     DateTime?
+  cancelledAt     DateTime?
+  cancellationReason String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relationships
+  payment         Payment?
+  prasadOrders    PrasadOrder[]
+
+  @@index([userId, date])
+  @@index([templeId, date])
+  @@index([status])
+  @@index([bookingNumber])
+}
+
+// ============================================================
+// MODULE 3: Digital Donation & Financial Management
+// ============================================================
+
+enum DonationCategory {
+  GENERAL_FUND
+  SPECIFIC_PROJECT
+  SEVA_ACTIVITY
+  FESTIVAL_SPONSORSHIP
+  PRIEST_WELFARE
+  ANNADANAM
+  BUILDING_REPAIR
+  EDUCATION
+  MEDICAL_CAMP
+  OTHER
+}
+
+enum PaymentMethod {
+  UPI
+  CREDIT_CARD
+  DEBIT_CARD
+  NET_BANKING
+  WALLET
+  CASH
+  CHEQUE
+  INTERNATIONAL
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+model Donation {
+  id              String           @id @default(uuid())
+  donationNumber  String           @unique
+  userId          String?
+  user            User?            @relation(fields: [userId], references: [id])
+  templeId        String
+  temple          Temple           @relation(fields: [templeId], references: [id])
+  amount          Float
+  currency        String           @default("INR")
+  category        DonationCategory @default(GENERAL_FUND)
+  purpose         String?
+  isAnonymous     Boolean          @default(false)
+  donorName       String?
+  donorPhone      String?
+  donorEmail      String?
+  donorPan        String?
+  paymentMethod   PaymentMethod
+  paymentStatus   PaymentStatus    @default(PENDING)
+  transactionId   String?
+  is80GEligible   Boolean          @default(false)
+  receiptGenerated Boolean         @default(false)
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relationships
+  receipt         Receipt?
+  payment         Payment?
+  taxCertificate  TaxCertificate?
+
+  @@index([templeId, createdAt])
+  @@index([userId])
+  @@index([category])
+  @@index([paymentStatus])
+  @@index([donationNumber])
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  bookingId       String?       @unique
+  booking         Booking?      @relation(fields: [bookingId], references: [id])
+  donationId      String?       @unique
+  donation        Donation?     @relation(fields: [donationId], references: [id])
+  prasadOrderId   String?       @unique
+  prasadOrder     PrasadOrder?  @relation(fields: [prasadOrderId], references: [id])
+  amount          Float
+  currency        String        @default("INR")
+  method          PaymentMethod
+  status          PaymentStatus @default(PENDING)
+  gatewayRef      String?
+  gatewayResponse String?
+  processedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status])
+}
+
+model FundAllocation {
+  id          String           @id @default(uuid())
+  templeId    String
+  category    DonationCategory
+  budgeted    Float            @default(0)
+  received    Float            @default(0)
+  spent       Float            @default(0)
+  period      String           // YYYY-MM format
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([templeId, category, period])
+  @@index([templeId, period])
+}
+
+// ============================================================
+// MODULE 4: Automated Receipting & Tax Compliance
+// ============================================================
+
+model Receipt {
+  id            String   @id @default(uuid())
+  receiptNumber String   @unique
+  donationId    String   @unique
+  donation      Donation @relation(fields: [donationId], references: [id])
+  amount        Float
+  donorName     String
+  donorAddress  String?
+  templeName    String
+  purpose       String
+  paymentMode   String
+  issuedAt      DateTime @default(now())
+  pdfUrl        String?
+  qrCode        String?
+  digitalSignature String?
+  emailSent     Boolean  @default(false)
+  smsSent       Boolean  @default(false)
+
+  @@index([receiptNumber])
+  @@index([donationId])
+}
+
+model TaxCertificate {
+  id              String   @id @default(uuid())
+  certificateNumber String @unique
+  donationId      String   @unique
+  donation        Donation @relation(fields: [donationId], references: [id])
+  donorName       String
+  donorPan        String
+  amount          Float
+  financialYear   String   // e.g., "2025-26"
+  templeRegistration String
+  temple80GNumber String
+  issuedAt        DateTime @default(now())
+  pdfUrl          String?
+  isValid         Boolean  @default(true)
+
+  @@index([financialYear])
+  @@index([donorPan])
+}
+
+// ============================================================
+// MODULE 5: Prasad Management & Tokenization
+// ============================================================
+
+model PrasadItem {
+  id              String   @id @default(uuid())
+  templeId        String
+  temple          Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  price           Float    @default(0)
+  imageUrl        String?
+  nutritionalInfo String?
+  allergens       String?
+  preparationTime Int?     // in minutes
+  isVegetarian    Boolean  @default(true)
+  isSugarFree     Boolean  @default(false)
+  isAvailable     Boolean  @default(true)
+  maxPerDevotee   Int      @default(5)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  orders          PrasadOrder[]
+  inventory       PrasadInventory[]
+
+  @@index([templeId, isAvailable])
+}
+
+model PrasadOrder {
+  id          String   @id @default(uuid())
+  bookingId   String?
+  booking     Booking? @relation(fields: [bookingId], references: [id])
+  prasadId    String
+  prasad      PrasadItem @relation(fields: [prasadId], references: [id])
+  quantity    Int
+  totalPrice  Float
+  tokenCode   String   @unique
+  tokenColor  String?
+  status      String   @default("ordered") // ordered, preparing, ready, picked_up, expired
+  validUntil  DateTime
+  pickedUpAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  payment     Payment?
+
+  @@index([tokenCode])
+  @@index([status])
+}
+
+model PrasadInventory {
+  id          String   @id @default(uuid())
+  prasadId    String
+  prasad      PrasadItem @relation(fields: [prasadId], references: [id])
+  ingredient  String
+  quantity    Float
+  unit        String
+  minLevel    Float    @default(0)
+  expiryDate  DateTime?
+  supplier    String?
+  lastOrdered DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([prasadId])
+}
+
+// ============================================================
+// MODULE 6: Volunteer Management System
+// ============================================================
+
+model VolunteerProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills          String[] // array of skill tags
+  certifications  String[]
+  availableDays   Int[]    // 0=Sunday to 6=Saturday
+  emergencyContact String?
+  emergencyPhone  String?
+  tshirtSize      String?
+  totalHours      Float    @default(0)
+  totalPoints     Int      @default(0)
+  tier            String   @default("bronze") // bronze, silver, gold, platinum
+  joinedAt        DateTime @default(now())
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  shifts          VolunteerShift[]
+  badges          VolunteerBadge[]
+
+  @@index([isActive])
+}
+
+model VolunteerShift {
+  id            String   @id @default(uuid())
+  volunteerId   String
+  volunteer     VolunteerProfile @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  date          DateTime
+  startTime     String
+  endTime       String
+  task          String
+  taskDescription String?
+  location      String?
+  status        String   @default("scheduled") // scheduled, checked_in, completed, missed, swapped
+  checkedInAt   DateTime?
+  checkedOutAt  DateTime?
+  hoursLogged   Float?
+  supervisorNote String?
+  rating        Int?     // 1-5
+  createdAt     DateTime @default(now())
+
+  @@index([volunteerId, date])
+  @@index([date, status])
+}
+
+model VolunteerBadge {
+  id          String   @id @default(uuid())
+  volunteerId String
+  volunteer   VolunteerProfile @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  badgeName   String
+  badgeIcon   String?
+  description String?
+  earnedAt    DateTime @default(now())
+
+  @@index([volunteerId])
+}
+
+// ============================================================
+// MODULE 7: Communication & Engagement Hub
+// ============================================================
+
+enum NotificationType {
+  TRANSACTIONAL
+  PROMOTIONAL
+  OPERATIONAL
+  PERSONALIZED
+  EMERGENCY
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  PUSH
+  IN_APP
+}
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id])
+  type      NotificationType
+  channel   NotificationChannel
+  title     String
+  message   String
+  data      String?             // JSON payload
+  isRead    Boolean             @default(false)
+  sentAt    DateTime?
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, isRead])
+  @@index([type, createdAt])
+}
+
+model Announcement {
+  id          String   @id @default(uuid())
+  templeId    String
+  temple      Temple   @relation(fields: [templeId], references: [id], onDelete: Cascade)
+  title       String
+  content     String
+  category    String?  // general, festival, emergency, maintenance
+  priority    String   @default("normal") // low, normal, high, urgent
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  publishAt   DateTime @default(now())
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([templeId, isActive])
+}
+
+model SpiritualContent {
+  id          String   @id @default(uuid())
+  title       String
+  type        String   // scripture, bhajan, video, article
+  content     String?
+  mediaUrl    String?
+  author      String?
+  language    String   @default("en")
+  tags        String[]
+  viewCount   Int      @default(0)
+  isPublished Boolean  @default(true)
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type, language])
+  @@index([isPublished])
+}
+
+model LiveStream {
+  id          String   @id @default(uuid())
+  templeId    String
+  title       String
+  streamUrl   String
+  status      String   @default("scheduled") // scheduled, live, ended
+  scheduledAt DateTime
+  startedAt   DateTime?
+  endedAt     DateTime?
+  viewerCount Int      @default(0)
+  recordingUrl String?
+  createdAt   DateTime @default(now())
+
+  @@index([status])
+}
+
+enum LostFoundStatus {
+  LOST
+  FOUND
+  MATCHED
+  CLAIMED
+  DISPOSED
+}
+
+model LostFoundItem {
+  id          String          @id @default(uuid())
+  templeId    String
+  temple      Temple          @relation(fields: [templeId], references: [id])
+  reportedBy  String
+  reporter    User            @relation(fields: [reportedBy], references: [id])
+  type        String          // lost or found
+  status      LostFoundStatus @default(LOST)
+  category    String          // electronics, documents, jewelry, clothing, other
+  description String
+  imageUrl    String?
+  foundLocation String?
+  foundTime   DateTime?
+  storageLocation String?
+  matchedItemId String?
+  claimedAt   DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([templeId, type, status])
+  @@index([category])
+}
+
+// ============================================================
+// MODULE 8: Analytics & Reporting
+// ============================================================
+
+model DailyAnalytics {
+  id                String   @id @default(uuid())
+  templeId          String
+  date              DateTime
+  totalVisitors     Int      @default(0)
+  totalBookings     Int      @default(0)
+  totalDonations    Float    @default(0)
+  donationCount     Int      @default(0)
+  avgQueueTime      Float?   // in minutes
+  prasadOrderCount  Int      @default(0)
+  newVolunteers     Int      @default(0)
+  feedbackCount     Int      @default(0)
+  avgRating         Float?
+  peakHour          String?
+  createdAt         DateTime @default(now())
+
+  @@unique([templeId, date])
+  @@index([templeId, date])
+}
+
+model Feedback {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  templeId    String
+  category    String   // service, facility, ritual, staff, general
+  rating      Int      // 1-5
+  comment     String?
+  status      String   @default("open") // open, in_progress, resolved, closed
+  response    String?
+  respondedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([templeId, category])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  action      String   // create, update, delete, login, etc.
+  entity      String   // table/model name
+  entityId    String?
+  oldValues   String?  // JSON
+  newValues   String?  // JSON
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entity, entityId])
+  @@index([action, createdAt])
+}
